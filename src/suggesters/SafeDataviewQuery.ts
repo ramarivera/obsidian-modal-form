@@ -1,12 +1,20 @@
-import { E, Either, parseFunctionBody, pipe } from "@std";
+import { E, Either, parseFunctionBody, pipe, Option } from "@std";
 import { App } from "obsidian";
 import { ModalFormError } from "src/utils/ModalFormError";
 import { log_error } from "src/utils/Log";
+import { FieldValue } from "src/store/formStore";
 
 //type DataviewQuery = (dv: unknown, pages: unknown) => unknown;
-export type SafeDataviewQuery = (dv: unknown, pages: unknown) => Either<ModalFormError, string[]>;
+export type SafeDataviewQuery = (
+    dv: unknown,
+    pages: unknown,
+    form: unknown,
+) => Either<ModalFormError, string[]>;
+
+export type DataviewQueryFormValues = Record<string, { name: string; value: Option<FieldValue> }>;
+
 /**
- * From a string representing a dataview query, it returns the safest possible 
+ * From a string representing a dataview query, it returns the safest possible
  * function that can be used to evaluate the query.
  * The function is sandboxed and it will return an Either<ModalFormError, string[]>.
  * If you want a convenient way to execute the query, use executeSandboxedDvQuery.
@@ -14,23 +22,29 @@ export type SafeDataviewQuery = (dv: unknown, pages: unknown) => Either<ModalFor
  * @returns SafeDataviewQuery
  */
 export function sandboxedDvQuery(query: string): SafeDataviewQuery {
-    if (!query.startsWith('return')) {
-        query = 'return ' + query;
+    if (!query.startsWith("return")) {
+        query = "return " + query;
     }
-    const parsed = parseFunctionBody<[unknown, unknown], unknown>(query, 'dv', 'pages');
-    return (dv: unknown, pages: unknown) => pipe(
-        parsed,
-        E.mapLeft((err) =>
-            new ModalFormError('Error evaluating the dataview query', err.message),
-        ),
-        E.flatMap((fn) => fn(dv, pages)),
-        E.flatMap((result) => {
-            if (!Array.isArray(result)) {
-                return E.left(new ModalFormError('The dataview query did not return an array'));
-            }
-            return E.right(result);
-        })
+    const parsed = parseFunctionBody<[unknown, unknown, unknown], unknown>(
+        query,
+        "dv",
+        "pages",
+        "form",
     );
+    return (dv: unknown, pages: unknown, form: unknown) =>
+        pipe(
+            parsed,
+            E.mapLeft(
+                (err) => new ModalFormError("Error evaluating the dataview query", err.message),
+            ),
+            E.flatMap((fn) => fn(dv, pages, form)),
+            E.flatMap((result) => {
+                if (!Array.isArray(result)) {
+                    return E.left(new ModalFormError("The dataview query did not return an array"));
+                }
+                return E.right(result);
+            }),
+        );
 }
 
 type logger = typeof log_error;
@@ -43,19 +57,24 @@ type logger = typeof log_error;
  * @param app the global obsidian app
  * @returns string[] if the query was executed successfully, otherwise an empty array
  */
-export function executeSandboxedDvQuery(query: SafeDataviewQuery, app: App, logger: logger = log_error): string[] {
+export function executeSandboxedDvQuery(
+    query: SafeDataviewQuery,
+    app: App,
+    form: DataviewQueryFormValues,
+    logger: logger = log_error,
+): string[] {
     const dv = app.plugins.plugins.dataview?.api;
 
     if (!dv) {
-        logger(new ModalFormError("Dataview plugin is not enabled"))
+        logger(new ModalFormError("Dataview plugin is not enabled"));
         return [] as string[];
     }
     const pages = dv.pages;
     return pipe(
-        query(dv, pages),
+        query(dv, pages, form),
         E.getOrElse((e) => {
             logger(e);
             return [] as string[];
-        })
-    )
+        }),
+    );
 }

@@ -2,7 +2,11 @@ import { A, pipe } from "@std";
 import { absurd } from "fp-ts/function";
 import { App } from "obsidian";
 import { multiselect, inputTag } from "src/core/InputDefinitionSchema";
-import { executeSandboxedDvQuery, sandboxedDvQuery } from "src/suggesters/SafeDataviewQuery";
+import {
+    DataviewQueryFormValues,
+    executeSandboxedDvQuery,
+    sandboxedDvQuery,
+} from "src/suggesters/SafeDataviewQuery";
 import { StringSuggest } from "src/suggesters/StringSuggest";
 import { FileSuggest } from "src/suggesters/suggestFile";
 import { Writable } from "svelte/store";
@@ -16,6 +20,7 @@ export function MultiSelectModel(
     fieldInput: multiselect,
     app: App,
     values: Writable<string[]>,
+    options: Set<string>,
 ): MultiSelectModel {
     const source = fieldInput.source;
     const removeValue = (value: string) =>
@@ -28,18 +33,13 @@ export function MultiSelectModel(
     switch (source) {
         case "dataview":
         case "fixed": {
-            const remainingOptions = new Set(
-                source === "fixed"
-                    ? fieldInput.multi_select_options
-                    : executeSandboxedDvQuery(sandboxedDvQuery(fieldInput.query), app),
-            );
             return {
                 createInput(element: HTMLInputElement) {
                     new StringSuggest(
                         element,
-                        remainingOptions,
+                        options,
                         (selected) => {
-                            remainingOptions.delete(selected);
+                            options.delete(selected);
                             values.update((x) => [...x, selected]);
                         },
                         app,
@@ -47,7 +47,7 @@ export function MultiSelectModel(
                     );
                 },
                 removeValue(value: string) {
-                    remainingOptions.add(value);
+                    options.add(value);
                     removeValue(value);
                 },
             };

@@ -13,7 +13,7 @@
     const makePreview = function (query: string) {
         error = "";
         return pipe(query, sandboxedDvQuery, (query) =>
-            executeSandboxedDvQuery(query, app, logger),
+            executeSandboxedDvQuery(query, app, {}, logger),
         );
     };
     $: id = `dataview_${index}`;

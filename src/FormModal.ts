@@ -9,12 +9,17 @@ import type { FormDefinition, FormOptions } from "./core/formDefinition";
 import { FileSuggest } from "./suggesters/suggestFile";
 import { DataviewSuggest } from "./suggesters/suggestFromDataview";
 import { SvelteComponent } from "svelte";
-import { E, parseFunctionBody, pipe, throttle } from "@std";
+import { A, E, parseFunctionBody, pipe, throttle } from "@std";
 import { log_error, log_notice } from "./utils/Log";
 import { FieldValue, FormEngine, makeFormEngine } from "./store/formStore";
 import { Writable } from "svelte/store";
 import { FolderSuggest } from "./suggesters/suggestFolder";
 import { MultiSelectModel, MultiSelectTags } from "./views/components/MultiSelectModel";
+import {
+    DataviewQueryFormValues,
+    executeSandboxedDvQuery,
+    sandboxedDvQuery,
+} from "./suggesters/SafeDataviewQuery";
 
 export type SubmitFn = (formResult: FormResult) => void;
 
@@ -164,6 +169,19 @@ export class FormModal extends Modal {
                     });
                 case "multiselect": {
                     fieldStore.value.set(initialValue ?? []);
+
+                    let suggesterOptions = new Set(
+                        fieldInput.source === "fixed"
+                            ? fieldInput.multi_select_options
+                            : fieldInput.source === "dataview"
+                              ? executeSandboxedDvQuery(
+                                    sandboxedDvQuery(fieldInput.query),
+                                    this.app,
+                                    {},
+                                )
+                              : [],
+                    );
+
                     this.svelteComponents.push(
                         new MultiSelect({
                             target: fieldBase.controlEl,
@@ -172,6 +190,7 @@ export class FormModal extends Modal {
                                     fieldInput,
                                     this.app,
                                     fieldStore.value as Writable<string[]>,
+                                    suggesterOptions,
                                 ),
                                 values: fieldStore.value as Writable<string[]>,
                                 errors: fieldStore.errors,
@@ -179,6 +198,43 @@ export class FormModal extends Modal {
                             },
                         }),
                     );
+
+                    if (fieldInput.source === "dataview") {
+                        const sub = this.formEngine.subscribe((form) => {
+                            pipe(
+                                form.fields,
+                                R.map((field) => ({
+                                    name: field.name,
+                                    value: field.value,
+                                })),
+                                (formValues) => {
+                                    const dataviewQueryResults = executeSandboxedDvQuery(
+                                        sandboxedDvQuery(fieldInput.query),
+                                        this.app,
+                                        formValues,
+                                    );
+
+                                    (fieldStore.value as Writable<string[]>).update((values) =>
+                                        pipe(
+                                            values,
+                                            A.filter((value) =>
+                                                dataviewQueryResults.contains(value),
+                                            ),
+                                        ),
+                                    );
+
+                                    suggesterOptions.clear();
+
+                                    dataviewQueryResults.forEach((result) => {
+                                        suggesterOptions.add(result);
+                                    });
+                                },
+                            );
+                        });
+
+                        return this.subscriptions.push(sub);
+                    }
+
                     return;
                 }
                 case "tag": {
@@ -202,11 +258,27 @@ export class FormModal extends Modal {
                 }
                 case "dataview": {
                     const query = fieldInput.query;
-                    return fieldBase.addText((element) => {
-                        new DataviewSuggest(element.inputEl, query, this.app);
+                    let dataviewSuggest: DataviewSuggest;
+
+                    fieldBase.addText((element) => {
+                        dataviewSuggest = new DataviewSuggest(element.inputEl, query, this.app);
                         element.onChange(fieldStore.value.set);
                         subToErrors(element.inputEl);
                     });
+
+                    const sub = this.formEngine.subscribe((form) => {
+                        pipe(
+                            form.fields,
+                            R.map((field) => ({
+                                name: field.name,
+                                value: field.value,
+                            })),
+                            (formValues) => {
+                                dataviewSuggest.setCurrentFormValues(formValues);
+                            },
+                        );
+                    });
+                    return this.subscriptions.push(sub);
                 }
                 case "select": {
                     const source = fieldInput.source;
